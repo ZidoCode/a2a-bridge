@@ -15,6 +15,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: "Run test suite"
-        run: python relay/test_a2a.py
+        run: python test_a2a.py
       - name: "Smoke run dogfood example"
-        run: python examples/two_agents.py
+        run: python two_agents.py
