@@ -197,7 +197,8 @@ def main() -> int:
         ok("delete path traversal blocked", c == 400, f"got {c}")
 
         # ------------------------------------------- security: poison file
-        # an undecodable file in the outbox must not wedge delivery
+        # an undecodable file in the outbox must not wedge delivery, and it must be
+        # moved out of the queue (otherwise it is re-read on every poll forever)
         zd = data / "outbox" / "zido"
         poison = zd / f"msg-{uuid.uuid4()}.json"
         poison.write_bytes(b"\xff\xfe not json at all")
@@ -206,7 +207,10 @@ def main() -> int:
         r = req("GET", f"{base}/inbox?agent=zido", secret=secret)[1]
         ok("delivery works with a poison file present",
            any(x["id"] == alive["id"] for x in r["messages"]))
-        poison.unlink()
+        ok("poison file quarantined out of the queue", not poison.exists(),
+           f"{poison.name} still in outbox")
+        ok("quarantine reason recorded",
+           (data / "dead-letter" / (poison.stem + ".reason.txt")).exists())
 
         # ------------------------------------------------- long-poll
         r = req("GET", f"{base}/inbox?agent=hermes", secret=secret)[1]

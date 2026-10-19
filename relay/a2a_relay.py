@@ -349,6 +349,14 @@ class H(BaseHTTPRequestHandler):
         to = msg["to"]
         with _lock:
             if msg["id"] in _state["seen"]:
+                # Same id, different bytes = the sender reused an id (or an attacker
+                # replays a mutated copy). Answering 200/duplicate would silently
+                # drop the new message; 409 makes it visible. Identical replays are
+                # still 200 so retries stay idempotent.
+                prev = _state["sent"].get(msg["id"])
+                if prev and prev.get("digest") and prev["digest"] != sign(SECRET, msg):
+                    self._json(409, {"error": "id already used with different content"})
+                    return
                 self._json(200, {"ok": True, "id": msg["id"], "duplicate": True})
                 return
         # Write the message FIRST, then remember it. Doing it the other way round
@@ -369,7 +377,8 @@ class H(BaseHTTPRequestHandler):
             _remember_id(msg["id"])
             _state["agents"].setdefault(to, {"registered_at": time.time()})
             # remember sender/recipient for /resolve after ack
-            _state["sent"][msg["id"]] = {"from": msg["from"], "to": to, "ts": time.time()}
+            _state["sent"][msg["id"]] = {"from": msg["from"], "to": to, "ts": time.time(),
+                                        "digest": sign(SECRET, msg)}
             if len(_state["sent"]) > DEDUP_KEEP:
                 for k in sorted(_state["sent"], key=lambda x: _state["sent"][x]["ts"])[:1000]:
                     _state["sent"].pop(k, None)
@@ -401,16 +410,33 @@ class H(BaseHTTPRequestHandler):
             # nothing yet — wait up to `wait` seconds for something to land
             _wait_for_new(d, wait)
             files = _pending(d)
-        # filter by HMAC (relay re-verifies on delivery — defense in depth)
+        # Filter by HMAC (the relay re-verifies on delivery — defense in depth).
+        # A file that fails verification is quarantined instead of skipped: left in
+        # place it would be re-read and re-hashed on every poll forever, and the
+        # queue would never drain.
         out = []
         for p in files:
             try:
                 m = json.loads(p.read_text())
-                if _hmac.compare_digest(sign(SECRET, m).encode(), str(m.get("hmac", "")).lower().encode()):
+                if not isinstance(m, dict):
+                    raise ValueError("not an object")
+                if _hmac.compare_digest(sign(SECRET, m).encode(),
+                                        str(m.get("hmac", "")).lower().encode()):
                     out.append(m)
-            except Exception:
-                pass
+                else:
+                    self._quarantine(p, "bad hmac on delivery")
+            except Exception as e:
+                self._quarantine(p, f"unreadable: {type(e).__name__}")
         self._json(200, {"messages": out})
+
+    def _quarantine(self, p: Path, reason: str) -> None:
+        """Move an undeliverable queue file to dead-letter with a reason."""
+        try:
+            dest = DATA / "dead-letter" / p.name
+            p.replace(dest)
+            (DATA / "dead-letter" / (p.stem + ".reason.txt")).write_text(reason)
+        except OSError:
+            pass
 
     def _resolve(self, mid: str) -> None:
         """Return the original sender+recipient of a message id.
@@ -448,9 +474,9 @@ class H(BaseHTTPRequestHandler):
     def _ack(self, agent: str, mid: str) -> None:
         """Ack is idempotent: two clients may legitimately ack the same message.
 
-        Checking exists() then unlink() is a race — the other thread can remove the
-        file in between and unlink() raises FileNotFoundError, which used to surface
-        as a 500. unlink(missing_ok=True) closes that window.
+        There is no exists()-then-unlink() window: unlink() itself is the check,
+        and FileNotFoundError is the ordinary "already acked" answer rather than a
+        500.
         """
         f = _agent_dir(agent) / f"msg-{mid}.json"
         try:
@@ -526,12 +552,19 @@ class RelayServer(ThreadingHTTPServer):
 
 def main() -> None:
     if not SECRET:
-        print("[a2a-relay] FATAL: A2A_SECRET env var is empty — refusing to start unauthenticated", file=sys.stderr)
+        print("[a2a-relay] FATAL: A2A_SECRET env var is empty — refusing to start unauthenticated",
+              file=sys.stderr)
         sys.exit(1)
+    if len(SECRET) < 16:
+        sys.stderr.write("[a2a-relay] WARNING: A2A_SECRET is shorter than 16 bytes; use a long random value\n")
     _load_state()
     with _lock:
         _save_state(force=True)
-    srv = RelayServer((HOST, PORT), H)
+    try:
+        srv = RelayServer((HOST, PORT), H)
+    except OSError as e:
+        print(f"[a2a-relay] FATAL: cannot bind {HOST}:{PORT} — {e}", file=sys.stderr)
+        sys.exit(1)
     print(f"[a2a-relay] listening on {HOST}:{PORT}, data={DATA}", flush=True)
     try:
         srv.serve_forever()
