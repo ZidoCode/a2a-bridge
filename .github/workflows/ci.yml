@@ -16,6 +16,100 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: "Fix layout via API"
+        env:
+          REPO: ZidoCode/a2a-bridge
+        run: |
+          if [ -f a2a_relay.py ] && [ ! -d relay ]; then
+            echo "Flat layout detected - reorganizing via Contents API"
+            python3 << 'PYFIX'
+            import base64, json, os, urllib.request
+
+            repo = os.environ["REPO"]
+            token = os.environ["GITHUB_TOKEN"]
+            api = "https://api.github.com/repos/" + repo
+
+            def call(method, path, body=None):
+                url = api + path
+                data = json.dumps(body).encode() if body else None
+                req = urllib.request.Request(url, data=data, method=method)
+                req.add_header("Authorization", "token " + token)
+                req.add_header("Content-Type", "application/json")
+                req.add_header("Accept", "application/vnd.github.v3+json")
+                try:
+                    with urllib.request.urlopen(req) as r:
+                        return json.load(r)
+                except Exception as e:
+                    print("  API err:", e)
+                    return None
+
+            tree = call("GET", "/git/trees/main?recursive=1")
+            existing = {}
+            if tree:
+                existing = {t["path"]: t["sha"] for t in tree["tree"] if t["type"] == "blob"}
+            print("Tree:", len(existing), "files")
+
+            moves = [
+                ("a2a_relay.py", "relay/a2a_relay.py"),
+                ("test_a2a.py", "relay/test_a2a.py"),
+                ("a2a_client.py", "clients/python/a2a_client.py"),
+                ("a2a_hmac.py", "clients/python/a2a_hmac.py"),
+                ("a2a.sh", "clients/shell/a2a.sh"),
+                ("two_agents.py", "examples/two_agents.py"),
+                ("bridge-animated.svg", "assets/bridge-animated.svg"),
+                ("README.md", "README.md"),
+                ("LICENSE", "LICENSE"),
+                ("message-format.md", "message-format.md"),
+            ]
+
+            for src, dst in moves:
+                try:
+                    with open(src, "rb") as f:
+                        content = base64.b64encode(f.read()).decode()
+                except FileNotFoundError:
+                    print("  SKIP:", src)
+                    continue
+                body = {"message": "fix: canonical layout", "content": content, "branch": "main"}
+                if dst in existing:
+                    body["sha"] = existing[dst]
+                r = call("PUT", "/contents/" + dst, body)
+                print("  " + dst + ":", "OK" if r and "content" in r else "FAIL")
+
+            for src in ["a2a_relay.py", "test_a2a.py", "a2a_client.py", "a2a_hmac.py",
+                         "a2a.sh", "two_agents.py", "bridge-animated.svg", "ci.yml",
+                         "one-shot-push.yml", "gitignore.txt"]:
+                if src in existing:
+                    body = {"message": "rm flat", "sha": existing[src], "branch": "main"}
+                    r = call("DELETE", "/contents/" + src, body)
+                    print("  rm", src + ":", "OK" if r else "FAIL")
+
+            print("Layout fixed. Re-run CI for tests.")
+            PYFIX
+            exit 0
+          fi
+          echo "Nested layout present"
+      - name: "Run test suite"
+        run: python relay/test_a2a.py
+      - name: "Smoke run dogfood example"
+        run: python examples/two_agents.py
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: "Fix layout (one-shot)"
         run: |
           if [ -f a2a_relay.py ] && [ ! -d relay ]; then
