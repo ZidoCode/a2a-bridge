@@ -11,60 +11,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Move files into canonical tree
         run: |
-          mkdir -p relay clients/python clients/shell examples assets .github/workflows
-          git mv a2a_relay.py    relay/a2a_relay.py
-          git mv test_a2a.py     relay/test_a2a.py
-          git mv a2a_client.py   clients/python/a2a_client.py
-          git mv a2a_hmac.py     clients/python/a2a_hmac.py
-          git mv a2a.sh          clients/shell/a2a.sh
-          chmod +x clients/shell/a2a.sh
-          git mv two_agents.py   examples/two_agents.py
-          git mv bridge-animated.svg assets/bridge-animated.svg
-          rm -f gitignore.txt one-shot-push.yml ci.yml
-          find .github/workflows -type f ! -name 'ci.yml' -delete
-          find .github/workflows -type f -name 'ci.yml' -delete
+          mkdir -p relay clients/python clients/shell examples assets
+          [ -f a2a_relay.py ] && git mv a2a_relay.py relay/a2a_relay.py || true
+          [ -f test_a2a.py ] && git mv test_a2a.py relay/test_a2a.py || true
+          [ -f a2a_client.py ] && git mv a2a_client.py clients/python/a2a_client.py || true
+          [ -f a2a_hmac.py ] && git mv a2a_hmac.py clients/python/a2a_hmac.py || true
+          [ -f a2a.sh ] && git mv a2a.sh clients/shell/a2a.sh || true
+          chmod +x clients/shell/a2a.sh || true
+          [ -f two_agents.py ] && git mv two_agents.py examples/two_agents.py || true
+          [ -f bridge-animated.svg ] && git mv bridge-animated.svg assets/bridge-animated.svg || true
+          git rm -q --ignore-unmatch gitignore.txt one-shot-push.yml ci.yml
+          find . -path ./.git -prune -o -path ./.github -prune -o -type f -print | sort
 
-      - name: Write canonical CI workflow
-        run: |
-          cat > .github/workflows/ci.yml <<'EOF'
-          name: CI
-
-          on:
-            push:
-              branches: [main]
-            pull_request:
-            workflow_dispatch:
-
-          jobs:
-            test:
-              runs-on: ubuntu-latest
-              steps:
-                - uses: actions/checkout@v4
-                - uses: actions/setup-python@v5
-                  with:
-                    python-version: "3.11"
-                - name: Test suite
-                  run: python relay/test_a2a.py
-                - name: Dogfood example
-                  run: python examples/two_agents.py
-          EOF
-          sed -i 's/^          //' .github/workflows/ci.yml
-          cat .github/workflows/ci.yml
-
-      - name: Verify tree
+      - name: Verify moved tree
         run: |
           python3 relay/test_a2a.py
           python3 examples/two_agents.py
-          find . -path ./.git -prune -o -type f -print | sort
 
       - name: Commit and push
         run: |
           git config user.name ZidoCode
           git config user.email zidocode@users.noreply.github.com
           git add -A
-          git commit -q -m "chore: canonical repo layout (relay/, clients/, examples/, assets/) + clean CI"
+          git commit -q -m "chore: canonical repo layout (relay/, clients/python, clients/shell, examples, assets)"
           git push -q https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
           echo "pushed $(git rev-parse HEAD)"
