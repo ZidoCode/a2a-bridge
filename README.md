@@ -147,9 +147,12 @@ A message on the wire:
   "content": {"op": "fib", "n": 20},
   "reply_to": null,
   "timestamp": "2026-10-19T13:30:00+07:00",
-  "hmac": "9f2c…"
+  "hmac": "2b4608ec415bda483c4e4d34ba0b7c66eefff42695276787542c1cab1614cee6"
 }
 ```
+
+That signature is real and reproducible: with `A2A_SECRET=pick-a-long-random-secret`, `sign()` over the
+canonical fields yields exactly that digest — paste the block into a test and it verifies.
 
 Four message types: `message`, `task`, `result`, `error`. Full spec in [`message-format.md`](message-format.md).
 
