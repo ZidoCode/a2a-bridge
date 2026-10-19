@@ -63,7 +63,7 @@ Everything crosses the relay: signed on the way in, stored until acked, re-verif
 a2a-bridge/
 ├── relay/
 │   ├── a2a_relay.py       # the server — ONE FILE, stdlib only
-│   └── test_a2a.py        # 48-check suite (spawns its own relay)
+│   └── test_a2a.py        # 50-check suite (spawns its own relay)
 ├── clients/
 │   ├── python/
 │   │   ├── a2a_client.py  # send / task / result / poll / ack
@@ -199,16 +199,16 @@ It's the **"just let my two agents talk"** tool.
 
 ```bash
 python3 relay/test_a2a.py
-# 48 checks passed
+# 50 checks passed
 ```
 
 The suite spins up its own relay on an ephemeral port, so it never touches a running instance. It covers the
 happy paths *and* the failure modes: auth, dedup, HMAC tampering (including `reply_to`), type confusion,
 path traversal on both read and write, oversized bodies, malformed `Content-Length`, a corrupt file poisoning
-the outbox, long-poll timing, concurrent double-ack, and the log-pipe backpressure regression that used to
-wedge the server after ~1,280 requests. The same command runs in CI on Python 3.9, 3.11 and 3.13, followed by
-the two-agent dogfood example, a shell-client smoke test, and a check that client errors exit cleanly instead
-of dumping a traceback.
+the outbox (and its quarantine), long-poll timing, concurrent double-ack, id reuse with different content,
+and the log-pipe backpressure regression that used to wedge the server after ~1,280 requests. The same
+command runs in CI on Python 3.9, 3.11 and 3.13, followed by the two-agent dogfood example, a shell-client
+smoke test, and a check that client errors exit cleanly instead of dumping a traceback.
 
 ## Roadmap (post-MVP)
 
