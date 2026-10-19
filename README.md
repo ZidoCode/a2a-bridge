@@ -63,7 +63,7 @@ Everything crosses the relay: signed on the way in, stored until acked, re-verif
 a2a-bridge/
 ├── relay/
 │   ├── a2a_relay.py       # the server — ONE FILE, stdlib only
-│   └── test_a2a.py        # 23-check suite (spawns its own relay)
+│   └── test_a2a.py        # 47-check suite (spawns its own relay)
 ├── clients/
 │   ├── python/
 │   │   ├── a2a_client.py  # send / task / result / poll / ack
@@ -74,7 +74,7 @@ a2a-bridge/
 │   └── two_agents.py      # dogfood: two agents solve a task together
 ├── assets/
 │   └── bridge-animated.svg
-└── message-format.md      # the standard (v1, <50 lines)
+└── message-format.md      # the standard (v1.1)
 ```
 
 No `pip install` for the relay. No `npm`. Python 3.9+ stdlib, bash + curl for the shell client.
@@ -108,6 +108,18 @@ That's it. They're talking.
 
 > The relay refuses to start without `A2A_SECRET` — there is no unauthenticated mode.
 
+**Configuration** (all optional, all environment variables):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `A2A_SECRET` | *required* | Shared secret. No secret → the relay exits. |
+| `A2A_PORT` | `8765` | Listen port. |
+| `A2A_HOST` | `0.0.0.0` | Listen address. Use `127.0.0.1` behind a reverse proxy. |
+| `A2A_DATA` | `./a2a-data` | State + outbox + dead-letter directory. |
+| `A2A_LONGPOLL_S` | `30` | Default long-poll wait, and the ceiling for `?wait=`. |
+| `A2A_MAX_BYTES` | `262144` | Max message size (256 KiB). |
+| `A2A_ACCESS_LOG` | `0` | Set `1` for a per-request access log on stderr. Leave off under systemd/Docker: an unread pipe can fill and stall the server. |
+
 ---
 
 ## API
@@ -116,13 +128,13 @@ That's it. They're talking.
 |--------|------|---------|
 | `POST` | `/register` | Register an agent id (idempotent) |
 | `POST` | `/send` | Deliver a signed message to an agent |
-| `GET`  | `/inbox?agent=X` | Long-poll for messages addressed to `X` |
+| `GET`  | `/inbox?agent=X&wait=N` | Long-poll (default `A2A_LONGPOLL_S`, clamped) |
 | `DELETE` | `/inbox/:id?agent=X` | Ack a delivered message (removes it) |
 | `GET`  | `/resolve/:id` | Who sent a message (route results back) |
 | `GET`  | `/health` | Liveness + registered agents |
 
 Every request carries `X-A2A-Secret: <secret>`. Every message carries an **HMAC-SHA256** over its canonical
-fields. Bad HMAC → `403`, dead-lettered, never delivered.
+fields (including `reply_to`). Bad HMAC → `403`, dead-lettered, never delivered.
 
 A message on the wire:
 
@@ -134,12 +146,12 @@ A message on the wire:
   "type": "task",
   "content": {"op": "fib", "n": 20},
   "reply_to": null,
-  "ts": 1760879812.441,
-  "sig": "9f2c…"
+  "timestamp": "2026-10-19T13:30:00+07:00",
+  "hmac": "9f2c…"
 }
 ```
 
-Four message types: `task`, `result`, `error`, `note`. Full spec in [`message-format.md`](message-format.md).
+Four message types: `message`, `task`, `result`, `error`. Full spec in [`message-format.md`](message-format.md).
 
 ---
 
@@ -162,7 +174,11 @@ Four message types: `task`, `result`, `error`, `note`. Full spec in [`message-fo
   (defense in depth).
 - **No SSRF surface.** The relay only stores and serves JSON to authenticated agents — it never calls back to
   client-supplied URLs, so there's no webhook SSRF vector.
+- **No path traversal.** Agent ids and message ids are matched against strict patterns (`^[a-z0-9][a-z0-9_-]{2,63}$`
+  and a canonical UUID) *before* they touch the filesystem, so `?agent=../../etc` is a `400`, not a file read.
 - **Bounded state.** Dedup index + send-index are capped (LRU) so a long-lived relay can't grow unbounded.
+- **Bounded bodies.** Oversized `Content-Length` (including negative and non-numeric) is rejected with `413`
+  before a single byte is buffered.
 
 What it does **not** do yet: per-agent secrets, transport encryption (put it behind TLS — Caddy, nginx or a
 Cloudflare Tunnel all work), or replay windows beyond the dedup index. Those are on the roadmap, listed honestly.
@@ -183,11 +199,14 @@ It's the **"just let my two agents talk"** tool.
 
 ```bash
 python3 relay/test_a2a.py
-# 23 checks passed
+# 47 checks passed
 ```
 
-The suite spins up its own relay on an ephemeral port, so it never touches a running instance. The same
-command runs in CI on every push, followed by the two-agent dogfood example.
+The suite spins up its own relay on an ephemeral port, so it never touches a running instance. It covers the
+happy paths *and* the failure modes: auth, dedup, HMAC tampering (including `reply_to`), type confusion,
+path traversal on both read and write, oversized bodies, malformed `Content-Length`, a corrupt file poisoning
+the outbox, and long-poll timing. The same command runs in CI on every push, followed by the two-agent
+dogfood example.
 
 ## Roadmap (post-MVP)
 
