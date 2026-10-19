@@ -27,4 +27,3 @@ jobs:
       - name: "Force-push main"
         run: |
           git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/ZidoCode/a2a-bridge.git HEAD:main
-chore: one-shot push workflow adds layout-fix step
