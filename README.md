@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/bridge-animated.svg" alt="Two agents exchanging task and result messages through an a2a-bridge relay" width="760"/>
+  <img src="assets/bridge-animated.svg" alt="Two agents exchanging task and result messages through an a2a-bridge relay" width="820"/>
 </p>
 
 <p align="center">
@@ -7,13 +7,14 @@
 </p>
 
 <p align="center">
-  <img alt="CI" src="https://github.com/ZidoCode/a2a-bridge/actions/workflows/ci.yml/badge.svg"/>
+  <a href="https://github.com/ZidoCode/a2a-bridge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZidoCode/a2a-bridge/actions/workflows/ci.yml/badge.svg"/></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white"/>
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-stdlib%20only-lightgrey"/>
+  <img alt="Tests" src="https://img.shields.io/badge/tests-23%20checks-34d399"/>
   <img alt="License" src="https://img.shields.io/badge/license-MIT-8b5cf6"/>
 </p>
 
-**`a2a-bridge`** is a lightweight, self-hostable message relay for independent AI agents on *different machines*.
+**`a2a-bridge`** is a lightweight, self-hostable message relay for independent AI agents running on *different machines*.
 No Agent Cards. No protocol negotiation. No shared runtime. **One secret, one port, five minutes.**
 
 Two agents that can't share a filesystem or a process can still send messages, delegate tasks, and get results
@@ -36,13 +37,33 @@ Indie agent builders run real agents on separate boxes. Talking them to each oth
 
 ---
 
+## Watch it work
+
+Real output from `examples/two_agents.py` — two separate agent processes, one relay, zero shared state:
+
+```text
+[setup] started local relay at http://127.0.0.1:40721
+[hermes] sent task 3374e23d-95dc-4f51-9286-acbda1bcf0c1 to zido
+[zido] received task 3374e23d-95dc-4f51-9286-acbda1bcf0c1: {'op': 'fib', 'n': 20}
+[zido] computed fib(20) = 6765
+[zido] sent result b8e7f5ed-79f9-498d-b6c0-3d0021a8d623 back to hermes
+[hermes] received result: fib(20)=6765  (reply_to 3374e23d…)
+
+✔ two agents exchanged task + result over the bridge
+```
+
+`hermes` never learns where `zido` runs, and `zido` never holds a connection open to `hermes`.
+Everything crosses the relay: signed on the way in, stored until acked, re-verified on delivery.
+
+---
+
 ## What's in the box
 
-```
+```text
 a2a-bridge/
 ├── relay/
-│   ├── a2a_relay.py     # the server — ONE FILE, stdlib only
-│   └── test_a2a.py      # 23-check suite (spawns its own relay)
+│   ├── a2a_relay.py       # the server — ONE FILE, stdlib only
+│   └── test_a2a.py        # 23-check suite (spawns its own relay)
 ├── clients/
 │   ├── python/
 │   │   ├── a2a_client.py  # send / task / result / poll / ack
@@ -103,13 +124,34 @@ That's it. They're talking.
 Every request carries `X-A2A-Secret: <secret>`. Every message carries an **HMAC-SHA256** over its canonical
 fields. Bad HMAC → `403`, dead-lettered, never delivered.
 
-**Delivery model:** at-least-once. The relay holds a message until the recipient acks it. Recipients treat
-`id` as an idempotency key and skip what they've seen. Invalid or unauthenticated messages go to
-`dead-letter/` with a reason file — never silently dropped, never delivered.
+A message on the wire:
 
-**Task semantics:** a `task` is a request; the responder answers with a `result` (or `error`) carrying
-`reply_to`. The relay's `/resolve` lets the responder route back to the right agent even after the original
-was acked.
+```json
+{
+  "id": "3374e23d-95dc-4f51-9286-acbda1bcf0c1",
+  "from": "hermes",
+  "to": "zido",
+  "type": "task",
+  "content": {"op": "fib", "n": 20},
+  "reply_to": null,
+  "ts": 1760879812.441,
+  "sig": "9f2c…"
+}
+```
+
+Four message types: `task`, `result`, `error`, `note`. Full spec in [`message-format.md`](message-format.md).
+
+---
+
+## Delivery model
+
+- **At-least-once.** The relay holds a message until the recipient acks it.
+- **Idempotent by design.** Recipients treat `id` as an idempotency key and skip what they've already seen.
+- **Nothing vanishes.** Invalid or unauthenticated messages land in `dead-letter/` with a reason file —
+  never silently dropped, never delivered.
+- **Task → result routing.** A `task` is a request; the responder answers with a `result` (or `error`)
+  carrying `reply_to`. `/resolve` lets the responder route back to the right agent even after the original
+  was acked.
 
 ---
 
@@ -121,6 +163,9 @@ was acked.
 - **No SSRF surface.** The relay only stores and serves JSON to authenticated agents — it never calls back to
   client-supplied URLs, so there's no webhook SSRF vector.
 - **Bounded state.** Dedup index + send-index are capped (LRU) so a long-lived relay can't grow unbounded.
+
+What it does **not** do yet: per-agent secrets, transport encryption (put it behind TLS — Caddy, nginx or a
+Cloudflare Tunnel all work), or replay windows beyond the dedup index. Those are on the roadmap, listed honestly.
 
 ---
 
@@ -141,7 +186,8 @@ python3 relay/test_a2a.py
 # 23 checks passed
 ```
 
-The suite spins up its own relay on an ephemeral port, so it never touches a running instance.
+The suite spins up its own relay on an ephemeral port, so it never touches a running instance. The same
+command runs in CI on every push, followed by the two-agent dogfood example.
 
 ## Roadmap (post-MVP)
 
