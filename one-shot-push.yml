@@ -1,0 +1,17 @@
+name: one-shot push
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "Force-push main"
+        run: |
+          git config user.name "ZidoCode"
+          git config user.email "zidocode@users.noreply.github.com"
+          git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/ZidoCode/a2a-bridge.git HEAD:main
