@@ -16,6 +16,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: "Fix layout (one-shot)"
+        run: |
+          if [ -f a2a_relay.py ] && [ ! -d relay ]; then
+            mkdir -p relay clients/python clients/shell examples assets
+            git config user.name "ZidoCode"
+            git config user.email "zidocode@users.noreply.github.com"
+            git mv a2a_relay.py relay/
+            git mv test_a2a.py relay/
+            git mv a2a_client.py clients/python/
+            git mv a2a_hmac.py clients/python/
+            git mv a2a.sh clients/shell/
+            git mv two_agents.py examples/
+            git mv bridge-animated.svg assets/
+            git rm -f ci.yml one-shot-push.yml gitignore.txt 2>/dev/null || true
+            git add -A
+            git commit -m "fix: canonical project layout"
+            git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/ZidoCode/a2a-bridge.git HEAD:main
+            exit 0
+          fi
       - name: "Run test suite"
         run: python relay/test_a2a.py
       - name: "Smoke run dogfood example"
